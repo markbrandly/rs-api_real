@@ -1,0 +1,24 @@
++---------------------+
+|     players_tbl     |
++------------+--------+
+|player_id   |Int     | Auto_increment, primary
+|player_name |varchar | unique
++------------+--------+
+
++----------------------+
+|     datapoints_tbl   |
++------------+---------+
+|datapoint_id |Int     | Auto_increment, primary
+|player_id    |varchar | connected to players_tbl.player_id
+|date         |dateTime| 
++-------------+--------+
+
++---------------------------+
+|     datapoint_parts_tbl   |
++------------+--------------+
+|datapoint_part_id |Int     | Auto_increment, primary
+|datapoint_id      |Int     | connected to datapoints_tbl.datapoint_id
+|skill_name        |varchar | example: 'mining'
+|skill_xp          |Int     |
+|skill_rank        |Int     |
++------------------+--------+
