@@ -1,7 +1,6 @@
 <?php
-include('variables.php');
+require_once('dbconn.php');
 $player = array();
-
 
 function player($name){
 	global $player;
@@ -11,99 +10,126 @@ function player($name){
 	return $player[$name];
 }
 
-$skillNames = array("total","attack","defence","strength","hitpoints",
-        "ranged","prayer","magic","cooking","woodcutting",
-        "fletching","fishing","firemaking","crafting","smithing",
-        "mining","herblore","agility","thieving","slayer",
-        "farming","runecrafting","hunter","construction");
-
-function sanitize($name){
-	$whitelist = array_merge(range(0,9), range('a', 'z'), range('a','z'), array(' '), array('_'), array('-')); // valid character array
-	$name = preg_replace("/[^" . preg_quote(implode('',$whitelist), '/') . "]/i", "", $name); //only allows valid characters
-	$name = preg_replace(array('/\-/', '/\_/'), ' ', $name); //switches slashes and dashes to spaces
-	$name = trim($name); //takes off outside spaces
-	$name = ucwords(strtolower($name)); //capitalizes
-	return $name;
-}
-
-function xp_to_lvl($xp) {
-    $points = 0;
-    $lvlXP = 0;
-    for ($lvl = 1; $lvl < 100; $lvl++) {
-        $points += floor($lvl + 300.0 * pow(2.0, $lvl / 7.0));
-        $lvlXP = floor($points / 4);
-        if($lvlXP > $xp) {
-            return $lvl;
-        }
-    }
-    return 99;
-}
-
 class player{
 	function __construct($name){
 		global $password;
 		global $db;
-		$this->name = sanitize($name);
-		if (!isset($db)){
-			$db = new mysqli('localhost', 'root', $password, 'skiller_scores');
-		}
+		$this->name = self::sanitize($name);
 		$this->db = $db;
-		$this->new_stats_array(); //generates a stats array with every skill as keys --might be removed later--
+		//$this->new_stats_array(); //generates a stats array with every skill as keys
 	}
 
-	protected $skillNames = array("total","attack","defence","strength","hitpoints",
+	public static function sanitize($name){
+		$whitelist = array_merge(range(0,9), range('a', 'z'), range('a','z'), array(' '), array('_'), array('-')); // valid character array
+		$name = preg_replace("/[^" . preg_quote(implode('',$whitelist), '/') . "]/i", "", $name); //only allows valid characters
+		$name = preg_replace(array('/\-/', '/\_/'), ' ', $name); //switches slashes and dashes to spaces
+		$name = trim($name); //takes off outside spaces
+		$name = ucwords(strtolower($name)); //capitalizes
+		return $name;
+	}
+
+	public static $skillNames = array("total","attack","defence","strength","hitpoints",
         "ranged","prayer","magic","cooking","woodcutting",
+        "fletching","fishing","firemaking","crafting","smithing",
+        "mining","herblore","agility","thieving","slayer",
+        "farming","runecrafting","hunter","construction");
+	public static $skillerSkills = array("total", "cooking","woodcutting",
         "fletching","fishing","firemaking","crafting","smithing",
         "mining","herblore","agility","thieving","slayer",
         "farming","runecrafting","hunter","construction");
 	protected $stats_api_updated = false;
 	public $name;
-	public $stats;
+	public $stats = array();
+	public $stat_changes = array();
 	private $playerId = null;
 	private $tracking;
 
-	private function new_stats_array(){ //creates an array with every stat name
-		$stats = array();
-		foreach ($this->skillNames as $skill){
-			$stats[$skill] = array();
-			$stats[$skill]['rank'] = null;
-			$stats[$skill]['lvl'] = null;
-			$stats[$skill]['xp'] = null;
-		}
-		$this->stats = $stats;
+	public static function xp_to_lvl($xp) {
+	  $points = 0;
+    $lvlXP = 0;
+    for ($lvl = 1; $lvl < 127; $lvl++) {
+      $points += floor($lvl + 300.0 * pow(2.0, $lvl / 7.0));
+      $lvlXP = floor($points / 4);
+      if($lvlXP > $xp) {
+        return $lvl;
+      }
+    }
+    return 126;
 	}
 
+
+
 	public function load_all_stats(){ //loads every stat from database
-		$sql = <<<SQL
-			SELECT skill_name, skill_xp, skill_rank, skill_level
-			FROM datapoint_parts_tbl 
-			where datapoint_id = ( 
+		if(!$this->stats_api_updated){
+			$sql = <<<SQL
 				select datapoint_id 
 				from datapoints_tbl 
 				where player_id = {$this->player_id()}
 				order by date desc 
 				limit 1
-				)
 SQL;
-		if($result = $this->db->query($sql)){
-			while ($row = $result->fetch_assoc()){
-	       		$this->stats[$row['skill_name']]['xp'] = $row["skill_xp"];
-	       		$this->stats[$row['skill_name']]['rank'] = $row["skill_rank"];
-	       		$this->stats[$row['skill_name']]['lvl'] = $row["skill_level"];
-	    	}
-	    	return true;
-			$this->stats_api_updated = false;	    	
+			$result = $this->db->query($sql);
+			$id = $result->fetch_assoc()['datapoint_id'];
+			$sql = <<<SQL
+				SELECT xp, level, virtual, rank
+				from datapoint_total_tbl
+				where datapoint_id = $id
+SQL;
+			$result = $this->db->query($sql);
+			$row =  $result->fetch_assoc();
+			$this->stats['total'] = array();
+			$this->stats['total']['xp'] = $row['xp'];
+			$this->stats['total']['rank'] = $row['rank'];
+			$this->stats['total']['lvl'] = $row['level'];
+			$this->stats['total']['vlvl'] = $row['virtual'];
+			$sql = <<<SQL
+				SELECT skill_name, xp, rank
+				FROM datapoint_skills_tbl 
+				where datapoint_id = $id
+SQL;
+			if($result = $this->db->query($sql)){
+				while ($row = $result->fetch_assoc()){
+					$this->stats[$row['skill_name']] = array();
+		       		$this->stats[$row['skill_name']]['xp'] = $row["xp"];
+		       		$this->stats[$row['skill_name']]['rank'] = $row["rank"];
+		       		$this->stats[$row['skill_name']]['lvl'] = self::xp_to_lvl($row["xp"]);
+		    	}
+		    	return true; 	
+			}
+			return false;
 		}
-		return false;
+		return true;
 	}
 
 	
 
 	public function load_stat($stat){ //loads single stat from database
-		if(array_key_exists($stat, $this->stats)){
-			if(!isset($this->stats[$stat]['lvl'])
-			or !isset($this->stats[$stat]['xp'])
-			or !isset($this->stats[$stat]['rank'])){
+		if(in_array($stat, self::$skillerSkills)){
+			if(!isset($this->stats[$stat])){
+				if ($stat == 'total'){
+					$sql = <<<SQL
+						SELECT xp, level, virtual, rank
+						FROM datapoint_total_tbl
+						where datapoint_id = ( 
+							select datapoint_id 
+							from datapoints_tbl 
+							where player_id = {$this->player_id()}
+							order by date desc 
+							limit 1
+							) 
+SQL;
+					$this->db->query($sql);
+					if ($result = $this->db->query($sql) AND $row = $result->fetch_assoc()){
+						$this->stats['total'] = array(
+							'xp' => $row['xp'],
+							'lvl' => $row['level'],
+							'vlvl' => $row['virtual'],
+							'rank' => $row['rank']
+							);
+						return true;
+					}
+				}
+				else{
 					$sql = <<<SQL
 						SELECT skill_xp, skill_rank, skill_level
 						FROM datapoint_parts_tbl 
@@ -117,17 +143,20 @@ SQL;
 						AND skill_name = '$stat'
 SQL;
 				if ($result = $this->db->query($sql) AND $row = $result->fetch_assoc()){
-		       		$this->stats[$stat]['xp'] = $row["skill_xp"];
-		       		$this->stats[$stat]['rank'] = $row["skill_rank"];
-		       		$this->stats[$stat]['lvl'] = $row["skill_level"];
+					$this->stat[$stat] = array(
+						'xp' => $row["skill_xp"],
+						'rank' => $row["skill_rank"],
+						'lvl' => $row["skill_level"]
+						);		       		
 		       		if(isset($this->stats[$stat]['xp']) and isset($this->stats[$stat]['rank']) and isset($this->stats[$stat]['lvl'])){
 		    			$this->stats_api_updated = false;
 		    			return true;
 	    			}
-	    		}
-	    		return false;
+	    		}	
 	    	}
-	    	return true;
+	    	return false;
+	    }
+	    return true;
 		}
 		return false;
 	}
@@ -145,23 +174,101 @@ SQL;
 			curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
 			$rawStr = curl_exec($ch);
 			if (strlen($rawStr) == strlen(strip_tags($rawStr))){
-				//$rawStr = '66451,1211,11284756 191297,52,130985 160912,45,61846 214316,52,132805 77023,75,1291197 20666,85,3291695 101148,46,70766 68599,71,851256 58481,70,748115 147924,55,172688 165556,33,19549 145325,53,139543 49785,50,105445 39390,61,313953 119253,43,55296 43675,60,278262 84555,39,36314 54331,55,167667 46144,53,147725 133127,39,35299 61174,35,24304 1198,84,3058746 39358,54,151300 124508,1,0 72054,2 -1,-1 -1,-1';
 				$rawStats = preg_split('/\s+/', $rawStr);
 				$stats = array();
 				$i = 0;
-				foreach ($this->skillNames as $skill){
+				$stats['total'] = array();
+				$stats['total']['rank'] = explode(',', $rawStats[$i++])[0];
+				$stats['total']['lvl'] = 16;
+				$stats['total']['vlvl'] = 16;
+				$stats['total']['xp'] = 1154;
+				foreach (array_slice(self::$skillNames, 1) as $skill){
 					$stats[$skill] = array();
 					$ph = explode(',', $rawStats[$i++]);
 					$stats[$skill]['rank'] = $ph[0];
-					$stats[$skill]['lvl'] = $ph[1];
+					$stats[$skill]['lvl'] = self::xp_to_lvl($ph[2]);
 					$stats[$skill]['xp'] = $ph[2];
-				}
+ 				}
+ 				foreach (array_slice(self::$skillerSkills, 1) as $skill){
+ 					$stats['total']['vlvl'] += $stats[$skill]['lvl'];
+					$stats['total']['lvl'] += min(99, $stats[$skill]['lvl']);
+					$stats['total']['xp'] += $stats[$skill]['xp'];
+ 				}
 				$this->stats = $stats;	
 				return true;
 			}
 			return false;
 		}
 		return true;
+	}
+
+	public function gen_json_string($skillId){
+		$skill = self::$skillerSkills[$skillId];
+		$json = array();
+		$json['cols'] = array(
+	    array(
+	      "label"=>"year",
+	      "type"=>"date",
+	    ),
+	    array(
+	      "label"=>"Experience",
+	      "type"=>"number",
+	    )
+  	);
+  	$json['rows'] = array();
+  	if ($skill == 'total'){
+			$sql = <<<SQL
+				SELECT CAST(date AS DATE) as date, xp
+				from (
+				    select datapoint_id, date
+				    from datapoints_tbl
+				    where player_id = {$this->player_id()}
+				    ) as a
+				inner join (
+				    select datapoint_id, xp
+				    from datapoint_total_tbl
+				    ) 
+				as b
+				ON a.datapoint_id=b.datapoint_id
+				group by CAST(date AS DATE)
+				order by date
+SQL;
+  	}
+  	else{
+  		$sql = <<<SQL
+				SELECT CAST(date AS DATE) as date, xp
+				from (
+				    select datapoint_id, date
+				    from datapoints_tbl
+				    where player_id = {$this->player_id()}
+				    ) as a
+				inner join (
+				    select datapoint_id, xp
+				    from datapoint_skills_tbl
+				    where skill_name = '$skill'
+				    ) 
+				as b
+				ON a.datapoint_id=b.datapoint_id
+				group by CAST(date AS DATE)
+				order by date
+SQL;
+  	}
+		$result = $this->db->query($sql);
+		while ($row = $result->fetch_assoc()){
+			$date = explode('-',$row['date']);
+			$xp = $row['xp'];
+			$json['rows'][]= array(
+	      "c" => array(
+	        array(
+	          "v" => "Date(".$date[0].", ".$date[1].", ".$date[2].")"
+	        ),
+	        array(
+	          "v" => $xp
+	        )
+	      )
+	    );
+		}
+		return json_encode($json);
 	}
 
 	public function create_entry(){ //creates a player entry if cb < 4 (definition of a skiller)
@@ -178,74 +285,162 @@ SQL;
 		return false;
 	}
 
+	public function has_changed(){
+		$this->get_api_data();
+		$sql = <<<SQL
+			SELECT date, xp
+			FROM 
+				(select *
+			     from datapoints_tbl
+			     where player_id = (
+			         select player_id
+			         from players_tbl
+			         where player_name = '$this->name'
+			         )
+			     order by date desc
+			     limit 2
+			     )
+			as d
+			inner join datapoint_total_tbl as dt
+			  on d.datapoint_id=dt.datapoint_id
+			order by d.date
+			desc
+SQL;
+		$result = $this->db->query($sql);
+		$result->fetch_assoc();
+		$row = $result->fetch_assoc();
+		$xp = $row['xp'];
+		if ($this->stats['total']['xp'] == $row['xp']){
+			return false;
+		}
+		return true;
+	}
+
+	private function delete_last(){
+			$sql = <<<SQL
+				DELETE
+				FROM datapoints_tbl
+				WHERE player_id = {$this->player_id()}
+				order by date
+				desc
+				limit 1;				
+SQL;
+			$this->db->query($sql);
+	}
+
+
 	public function update(){ //creates a datapoint for a player
 		if ($this->is_entry() or $this->create_entry()){
 			//gets data from api
-			if($this->get_api_data()){
-				//updates database with valid entry if skiller
-				if($this->cb() < 4){
-					$sql = <<<SQL
-						SELECT count(*) 
-						AS results 
-						FROM datapoints_tbl 
-						WHERE player_id = {$this->player_id()}
-						AND cast(date as date) = utc_date()
-SQL;
-					$result = $this->db->query($sql);
-					if(!$this->is_tracking() or (isset($result) AND $row = $result->fetch_assoc() AND $row['results'] > 1)){
-						$sql = <<<SQL
-							DELETE 
-							FROM datapoint_parts_tbl
-							WHERE datapoint_id =(
-							    SELECT datapoint_id
-							    FROM datapoints_tbl
-							    WHERE player_id = {$this->player_id()}
-							   	order by date
-							    limit 1
-							)
-SQL;
-						if ($result = $this->db->query($sql)){
-							$sql = <<<SQL
-							DELETE
-							FROM datapoints_tbl
-							WHERE player_id = {$this->player_id()}
-							order by date
-							desc
-							limit 1;				
-SQL;
-							$this->db->query($sql);
-						}
-					}
-					$sql = <<<SQL
-						INSERT INTO datapoints_tbl (player_id, date, valid)
-						VALUES ((SELECT player_id FROM players_tbl WHERE player_name = "$this->name"), UTC_TIMESTAMP(), 1)
-SQL;
-					$this->db->query($sql);
-					$datapoint_id = $this->db->insert_id;
-					$sql = <<<SQL
-						INSERT INTO datapoint_parts_tbl (datapoint_id, skill_name, skill_xp, skill_rank, skill_level)
-						VALUES
-SQL;
-					foreach ($this->stats as $skillName=>$skillInfo){
-						$sql .= " (".$datapoint_id.", '".$skillName."', ".$skillInfo['xp'].", ".$skillInfo['rank'].", ".$skillInfo['lvl']."),";
-					}
-					$sql = rtrim($sql, ",").";";
-					$this->db->query($sql);
-					return true;		
+			if($this->get_api_data() and $this->cb() < 4){
+				if(!$this->is_tracking() or !$this->has_changed()){ // or (isset($result) AND $row = $result->fetch_assoc() AND $row['results'] > 1)){
+					$this->delete_last();
 				}
-				//if not a skiller, checks last db entry and if it isn't set or if it's valid it creates an invalid entry
-				elseif($this->is_valid()){
-					$sql = <<<SQL
-						INSERT INTO datapoints_tbl (player_id, date, valid)
-						VALUES ((SELECT player_id FROM players_tbl WHERE player_name = "$this->name"), UTC_TIMESTAMP(), 0)
+				$sql = <<<SQL
+					INSERT INTO datapoints_tbl (player_id, date, valid)
+					VALUES ((SELECT player_id FROM players_tbl WHERE player_name = "$this->name"), UTC_TIMESTAMP(), 1)
 SQL;
-					$this->db->query($sql);				
+				$this->db->query($sql);
+
+				$datapoint_id = $this->db->insert_id;
+				$sql = "
+					INSERT INTO datapoint_total_tbl (datapoint_id, xp, level, virtual, rank)
+					VALUES ($datapoint_id, ".$this->stats['total']['xp'].", ".$this->stats['total']['lvl'].", ".$this->stats['total']['vlvl'].", ".$this->stats['total']['rank']." )
+					";
+				$this->db->query($sql);
+				$sql = <<<SQL
+					INSERT INTO datapoint_skills_tbl (datapoint_id, skill_name, xp, rank)
+					VALUES
+SQL;
+				foreach (array_slice(self::$skillerSkills, 1) as $skill){
+					$sql .= " (".$datapoint_id.", '".$skill."', ".$this->stats[$skill]['xp'].", ".$this->stats[$skill]['rank']."),";
 				}
+				$sql = rtrim($sql, ",").";";
+				$this->db->query($sql);
+				return true;		
+			}
+			//if not a skiller, checks last db entry and if it isn't set or if it's valid it creates an invalid entry
+			elseif($this->is_valid()){
+				$sql = <<<SQL
+					INSERT INTO datapoints_tbl (player_id, date, valid)
+					VALUES ((SELECT player_id FROM players_tbl WHERE player_name = "$this->name"), UTC_TIMESTAMP(), 0)
+SQL;
+				$this->db->query($sql);				
 			}
 		}
 		return false;
-	 }
+	}
 
+	public function load_gains($period, $skill){
+		if ($this->is_tracking() and in_array($skill, self::$skillerSkills) and !isset($this->stat_changes[$skill][$period])){
+			if (!isset($this->stat_changes[$skill])){
+				$stat_changes[$skill] = array();
+			}
+			if ($period == 'day'){
+				$modPeriod = '1 day';
+			}
+			elseif ($period == 'week'){
+				$modPeriod = '7 day';
+			}
+			else{
+				return false;
+			}
+			if ($skill == 'total'){
+				$tbl = 'datapoint_total_tbl';
+				$skillMod = '';
+			}
+			else{
+				$tbl = 'datapoint_skills_tbl';
+				$skillMod = 'AND skill_name = "'.$skill.'"';
+			}
+			$sql = <<<SQL
+			SELECT (
+		    SELECT xp
+		    from $tbl
+		    where datapoint_id = (
+		        SELECT datapoint_id
+		        FROM datapoints_tbl
+		        WHERE player_id = {$this->player_id()}
+		        AND date >= utc_timestamp() - INTERVAL $modPeriod
+		        order by date desc
+		        limit 1
+		    		)
+				$skillMod
+				)-(
+		    SELECT xp
+		    from $tbl
+		    where datapoint_id = (
+		        SELECT datapoint_id
+		        FROM datapoints_tbl 
+		        WHERE player_id = {$this->player_id()}
+		        AND date >= utc_timestamp() - INTERVAL $modPeriod
+		        order by date asc
+		        limit 1
+	    	)
+				$skillMod
+			)
+			as chnge
+SQL;
+			$result = $this->db->query($sql);
+			if ($row = $result->fetch_assoc()){
+				$this->stat_changes[$skill][$period] = $row['chnge'];
+				return true;
+			}
+		}
+		return false;
+	}
+
+	public function day($skill){
+		if (isset($this->stat_changes[$skill]['day']) or $this->load_gains('day', $skill)){
+			return $this->stat_changes[$skill]['day'];
+		}
+	}
+
+	public function week($skill){
+		if (isset($this->stat_changes[$skill]['week']) or $this->load_gains('week', $skill)){
+			return $this->stat_changes[$skill]['week'];
+		}
+	}
 
 	public function name(){
 		return $this->name;
@@ -256,7 +451,7 @@ SQL;
 			$sql = <<<SQL
 				SELECT tracking
 				FROM players_tbl
-				WHERE player_name = $this->name
+				WHERE player_name = '$this->name'
 				LIMIT 1
 SQL;
 			if($result = $this->db->query($sql)){
@@ -286,8 +481,6 @@ SQL;
 		return $this->playerId;
 	}
 
-	
-
 	public function is_valid(){
 		$sql = <<<SQL
 			SELECT valid
@@ -297,7 +490,7 @@ SQL;
 			LIMIT 1
 SQL;
 		$result = $this->db->query($sql);
-		if(!$row = $result->fetch_assoc() or $row['valid'] == 1){
+		if($result != null AND $row = $result->fetch_assoc() AND $row['valid'] == 1){
 			return true;
 		}
 		return false;
@@ -316,32 +509,40 @@ SQL;
 		return false;
 	}
 
-	public function lvl($stat){ //returns player lvl in stat
-		if (array_key_exists($stat, $this->stats) and //only runs if array key $stat exists to prevent entering incorrect stat name
-			(isset($this->stats[$stat]['lvl']) or $this->load_stat($stat) or $this->get_api_data())){ //tries to load stat from database, if can't loads it from rs api
-				return $this->stats[$stat]['lvl'];
+	private function skill_info($type, $stat){
+		if (in_array($stat, self::$skillNames) and //only runs if array key $stat exists to prevent entering incorrect stat name
+			(isset($this->stats[$stat][$type]) or $this->load_stat($stat) or $this->get_api_data()
+			)){ //tries to load stat from database, if can't loads it from rs api
+				return $this->stats[$stat][$type];
 			}
 		return null;
+	}
+
+	public function lvl($stat){ //returns player lvl in stat
+		if ($stat == 'total'){
+			return $this->skill_info('lvl', $stat);
+		}
+		return min($this->skill_info('lvl', $stat), 99);
+	}
+
+	public function virtual($stat){
+		if ($stat == 'total'){
+			return $this->skill_info('vlvl', $stat);
+		}
+		return $this->skill_info('lvl', $stat);
 	}
 
 	public function xp($stat){ //returns player xp in stat
-		if (array_key_exists($stat, $this->stats) and //only runs if array key $stat exists to prevent entering incorrect stat name
-			(isset($this->stats[$stat]['xp']) or $this->load_stat($stat) or $this->get_api_data())){ //tries to load stat from database, if can't loads it from rs api
-				return $this->stats[$stat]['xp'];
-			}
-		return null;
+		return $this->skill_info('xp', $stat);
 	}
 
 	public function rank($stat){ //returns player rank in stat
-		if (array_key_exists($stat, $this->stats) and //only runs if array key $stat exists to prevent entering incorrect stat name
-			(isset($this->stats[$stat]['rank']) or $this->load_stat($stat) or $this->get_api_data())){ //tries to load stat from database, if can't loads it from rs api
-				return $this->stats[$stat]['rank'];
-			}
-		return null;
+		return $this->skill_info('rank', $stat);
 	}
 
 	public function last_updated(){
-		$sql = <<<SQL
+		if ($this->is_valid()){
+			$sql = <<<SQL
 			SELECT timediff(utc_timestamp(), (
 				select max(date) 
 				from datapoints_tbl 
@@ -349,9 +550,11 @@ SQL;
 			))
 			as last_updated
 SQL;
-		$result = $this->db->query($sql);
-		if($row = $result->fetch_assoc()){
-			return $row['last_updated'];
+			if($result = $this->db->query($sql)){
+				if($row = $result->fetch_assoc()){
+					return $row['last_updated'];
+				}
+			}
 		}
 		return false;
 	}
@@ -375,7 +578,4 @@ SQL;
 		}
 	}
 }
-
-echo player('bea5')->is_tracking();
-
 ?>
